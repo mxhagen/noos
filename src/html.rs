@@ -3,7 +3,7 @@
 //! Provided templates are unchecked -- users are expected to know html,
 //! but formatted strings are escaped to prevent injection attacks.
 
-use std::collections::BTreeMap;
+use std::{borrow::Cow, collections::BTreeMap};
 
 use html_escape::encode_safe;
 use regex::Regex;
@@ -15,49 +15,42 @@ use crate::{debug, error, info, log, warn};
 
 /// A minimally pre-parsed page template, that allows to
 /// calculate positions for substitutions only once.
+#[derive(Debug)]
 pub struct PageTemplate {
     template: String,
-    items_pos: Option<Position>,
+    items_pos: Vec<Position>,
 }
 
 /// A minimally pre-parsed item template, that allows to
 /// calculate positions for substitutions only once.
+#[derive(Debug)]
 pub struct ItemTemplate {
+    // TODO: Refactor: single sorted `Vec<(Position, Specifier)>` to avoid resorting in render
     template: String,
-    // TODO: Support multiple occurrences of the same format specifier (maybe switch to strfmt?)
-    title_pos: Option<Position>,
-    description_pos: Option<Position>,
-    source_pos: Option<Position>,
-    link_pos: Option<Position>,
-    date_pos: Option<Position>,
-    time_pos: Option<Position>,
+    title_pos: Vec<Position>,
+    description_pos: Vec<Position>,
+    source_pos: Vec<Position>,
+    link_pos: Vec<Position>,
+    date_pos: Vec<Position>,
+    time_pos: Vec<Position>,
 }
 
 impl Template<TimelineItem> for ItemTemplate {
     /// Parse an item template to make substitutions efficient.
-    /// NOTE: Exits on invalid template, see logging output.
     fn parse<S>(template: S) -> Self
     where
         S: ToString,
     {
         let template = template.to_string();
 
-        /// Helper to find positions of format specifiers with error handling.
-        fn helper(template: &str, specifier: &str) -> Position {
-            position_or_exit(
-                find_format_specifier(template, specifier),
-                &format!("format specifier '${{{specifier}}}'"),
-            )
-        }
-
         use format_specifiers::*;
 
-        let title_pos = helper(&template, TITLE).into();
-        let description_pos = helper(&template, DESCRIPTION).into();
-        let source_pos = helper(&template, SOURCE).into();
-        let link_pos = helper(&template, LINK).into();
-        let date_pos = helper(&template, DATE).into();
-        let time_pos = helper(&template, TIME).into();
+        let title_pos = find_format_specifiers(&template, TITLE);
+        let description_pos = find_format_specifiers(&template, DESCRIPTION);
+        let source_pos = find_format_specifiers(&template, SOURCE);
+        let link_pos = find_format_specifiers(&template, LINK);
+        let date_pos = find_format_specifiers(&template, DATE);
+        let time_pos = find_format_specifiers(&template, TIME);
 
         Self {
             template: template.to_string(),
@@ -84,76 +77,72 @@ impl Template<TimelineItem> for ItemTemplate {
 impl ItemTemplate {
     #[rustfmt::skip]
     pub fn render(&self, item: &TimelineItem) -> String {
-        // We use some simple size calculations to avoid reallocs.
-        // For all format specifiers in the template that DO OCCUR,
-        // we add the length of the escaped content and subtract
-        // the length of the format specifier itself.
-        let size = self.template.len();
+        // Made efficient by using size calculations.
+        // Start with template size, then for each substitution,
+        // add the size of the encoded string and subtract
+        // the size of the format specifier.
+        let mut size = self.template.len() as isize;
 
-        let helper = |specifier: &str, content: &str| {
-            let escaped = encode_safe(content).to_string();
-            let n = escaped.len() - (specifier.len() + "${}".len());
-            (escaped, size + n)
-        };
-
-        use format_specifiers::*;
-        let (title, size) = self.title_pos
-            .map_or(("(No title)".into(), 0), |_| helper(TITLE, &item.title()));
-
-        let (description, size) = self.description_pos
-            .map_or(("(No description)".into(), size), |_| {
-                helper(DESCRIPTION, &item.description())
-            });
-
-        let (source, size) = self.source_pos.map_or(("(No source)".into(), size), |_| {
-            helper(SOURCE, &item.source())
-        });
-
-        let (link, size) = self.link_pos
-            .map_or(("".into(), size), |_| helper(LINK, &item.link()));
-
-        let (date, size) = self.date_pos
-            .map_or(("".into(), size), |_| helper(DATE, &item.date()));
-
-        let (time, size) = self.time_pos
-            .map_or(("".into(), size), |_| helper(TIME, &item.time()));
-
-        // Now build the complete string
-        let mut html = String::with_capacity(size);
-        let mut last_pos = 0;
-
-        let mut insertions: Vec<_> = [
-            self.link_pos.map(|p| (p, link)),
-            self.title_pos.map(|p| (p, title)),
-            self.description_pos.map(|p| (p, description)),
-            self.source_pos.map(|p| (p, source)),
-            self.date_pos.map(|p| (p, date)),
-            self.time_pos.map(|p| (p, time)),
-        ].into_iter().flatten().collect();
-
-        insertions.sort_by_key(|(pos, _)| pos.start);
-
-        for (pos, content) in insertions {
-            html.push_str(&self.template[last_pos..pos.start]);
-            html.push_str(&content);
-            last_pos = pos.end;
+        /// Helper to get encoded string (Cow) and its size.
+        fn encoded_with_size<'a>(s: &'a str, specifier: &str) -> (Cow<'a, str>, isize) {
+            let encoded = encode_safe(s);
+            let n = encoded.len() as isize;
+            (encoded, n - "${}".len() as isize - specifier.len() as isize)
         }
 
-        html.push_str(&self.template[last_pos..]);
-        html
+        let (item_title, item_description, item_source, item_link, item_date, item_time) = (
+            item.title(), item.description(), item.source(), item.link(), item.date(), item.time()
+        );
+
+        use format_specifiers::*;
+        let (title_encoded, n1) = encoded_with_size(&item_title, TITLE);
+        let (description_encoded, n2) = encoded_with_size(&item_description, DESCRIPTION);
+        let (source_encoded, n3) = encoded_with_size(&item_source, SOURCE);
+        let (link_encoded, n4) = encoded_with_size(&item_link, LINK);
+        let (date_encoded, n5) = encoded_with_size(&item_date, DATE);
+        let (time_encoded, n6) = encoded_with_size(&item_time, TIME);
+
+        size += n1 * self.title_pos.len() as isize + n2 * self.description_pos.len() as isize
+            + n3 * self.source_pos.len() as isize  + n4 * self.link_pos.len() as isize
+            + n5 * self.date_pos.len() as isize    + n6 * self.time_pos.len() as isize;
+
+        // Now do the actual rendering with substitutions.
+        let mut rendered = String::with_capacity(size as usize);
+        let mut replacements: Vec<(&Position, _)> =
+            (self.title_pos.iter().map(|p| (p, title_encoded.clone())))
+                .chain(self.description_pos.iter().map(|p| (p, description_encoded.clone())))
+                .chain(self.source_pos.iter().map(|p| (p, source_encoded.clone())))
+                .chain(self.link_pos.iter().map(|p| (p, link_encoded.clone())))
+                .chain(self.date_pos.iter().map(|p| (p, date_encoded.clone())))
+                .chain(self.time_pos.iter().map(|p| (p, time_encoded.clone())))
+                .collect();
+
+        // Sort replacements by position
+        replacements.sort_by_key(|r| r.0.start);
+
+        // Build the final string
+        let mut last_pos = 0;
+        for (pos, encoded) in replacements {
+            rendered.push_str(&self.template[last_pos..pos.start]);
+            rendered.push_str(&encoded);
+            last_pos = pos.end;
+        }
+        rendered.push_str(&self.template[last_pos..]);
+
+        rendered
     }
 }
 
 impl Template<BTreeMap<i64, TimelineItem>> for PageTemplate {
     /// Parse a page template to make substitutions efficient.
-    /// NOTE: Exits on invalid template, see logging output.
     fn parse<S>(template: S) -> Self
     where
         S: ToString,
     {
         let template = template.to_string();
 
-        let items_pos = find_format_specifier(&template, format_specifiers::ITEMS);
+        let mut items_pos = find_format_specifiers(&template, format_specifiers::ITEMS);
+        items_pos.sort_by_key(|p| p.start);
 
         Self {
             template: template.to_string(),
@@ -162,7 +151,7 @@ impl Template<BTreeMap<i64, TimelineItem>> for PageTemplate {
     }
 
     /// Parse a page template from a file at a given path.
-    /// NOTE: Exits on invalid template or file read error, see logging output.
+    /// NOTE: Exits on file read error, see logging output.
     fn parse_file<P: AsRef<std::path::Path>>(path: P) -> Self {
         let template = std::fs::read_to_string(path).unwrap_or_else(|e| {
             error!("Failed to read template file: {e}");
@@ -181,74 +170,69 @@ impl PageTemplate {
         content: &BTreeMap<i64, TimelineItem>,
         item_template: &ItemTemplate,
     ) -> String {
-        if self.items_pos.is_none() {
-            warn!("No items position found in page template");
+        if self.items_pos.is_empty() {
+            warn!(
+                "No items position found in page template -- Your page will not contain any items!"
+            );
             return self.template.clone();
         }
 
-        let items_pos = self.items_pos.unwrap();
-
-        let items = content
+        // String of all rendered items
+        // Recent items first (rev), excluding items dated in the future (filter).
+        let items_string = content
             .iter()
-            // Larger timestamps (later articles) first
             .rev()
-            // Skip items dated in the future
-            .filter_map(
-                |(&ts, item)| match chrono::Utc::now().timestamp_millis() < ts {
-                    true => None,
-                    false => Some(item),
-                },
-            )
+            .filter_map(|(ts, item)| (chrono::Utc::now().timestamp() >= *ts).then_some(item))
             .map(|item| item_template.render(item))
             .collect::<String>();
 
-        let mut rendered = String::with_capacity(self.template.len() + items.len());
-        rendered.push_str(&self.template[..items_pos.start]);
-        rendered.push_str(&items);
-        rendered.push_str(&self.template[items_pos.end..]);
+        // Now do the actual rendering with substitutions.
+        let mut rendered = String::with_capacity(
+            (self.template.len() as isize
+                + (items_string.len() as isize
+                    - "${}".len() as isize
+                    - format_specifiers::ITEMS.len() as isize)
+                    * self.items_pos.len() as isize) as usize,
+        );
+
+        let mut last_pos = 0;
+        for pos in self.items_pos.clone() {
+            rendered.push_str(&self.template[last_pos..pos.start]);
+            rendered.push_str(&items_string);
+            last_pos = pos.end;
+        }
+        rendered.push_str(&self.template[last_pos..]);
+
         rendered
     }
 }
 
-/// Find the position of a format specifier in a template.
+/// Find the positions of all occurrences of a format specifier in a template.
 /// Format specifiers are of the form `${specifier}`,
 /// and can be escaped (ignored) with a leading backslash `\`.
-fn find_format_specifier(template: &str, specifier: &str) -> Option<Position> {
+fn find_format_specifiers(template: &str, specifier: &str) -> Vec<Position> {
     let re = format!(r"(?:^|[^\\])\$\{{{specifier}\}}");
     let re = Regex::new(&re).unwrap();
 
-    let start = re.find(template).map(|m| match m.start() {
-        0 => 0,
-        n => n + 1, // account for leading non-backslash char
-    });
+    let mut positions = Vec::new();
 
-    if start.is_none() {
-        debug!("Format specifier '${{{specifier}}}' not found in template");
-        return None;
-    }
-
-    let start = start.unwrap();
-    if template.as_bytes()[start] == b'\\' {
-        debug!("Format specifier '${{{specifier}}}' is escaped, ignoring");
-        return None;
-    }
-
-    let end = start + specifier.len() + "${}".len();
-    debug!("Found format specifier '${{{specifier}}}' at position: ({start:?}-{end:?})");
-
-    Position { start, end }.into()
-}
-
-/// Helper for common pattern of exiting on missing position.
-fn position_or_exit(pos: Option<Position>, description: &str) -> Position {
-    match pos {
-        Some(p) => p,
-        None => {
-            error!("Failed to find {description} in template");
-            error!("Exiting...");
-            std::process::exit(1);
+    for m in re.find_iter(template) {
+        let start = if m.start() == 0 { 0 } else { m.start() + 1 }; // account for leading non-backslash char
+        // Extra safety: ignore if escaped
+        if start > 0 && template.as_bytes()[start.saturating_sub(1)] == b'\\' {
+            debug!("Format specifier '${{{specifier}}}' is escaped, ignoring");
+            continue;
         }
+        let end = start + specifier.len() + "${}".len();
+        debug!("Found format specifier '${{{specifier}}}' at position: ({start:?}-{end:?})");
+        positions.push(Position { start, end });
     }
+
+    if positions.is_empty() {
+        debug!("Format specifier '${{{specifier}}}' not found in template");
+    }
+
+    positions
 }
 
 pub trait Template<Content> {

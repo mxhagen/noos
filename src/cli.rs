@@ -1,3 +1,5 @@
+//! Command line interface parsing and validation
+
 use crate::LogLevel;
 use clap::*;
 

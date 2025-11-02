@@ -41,27 +41,27 @@ pub fn add_timeline_item(timestamp: i64, item: TimelineItem) {
 
 /// Add all items from a Channel to the data store timeline
 pub fn add_channel_items(channel: &rss::Channel) {
-    let channel_title = channel.title().to_string();
-    let channel_url = channel.link().to_string();
     for item in channel.items() {
-        let pub_date = item.pub_date().unwrap_or("0").to_string();
-        let timestamp = match chrono::DateTime::parse_from_rfc2822(&pub_date) {
-            Ok(dt) => dt.timestamp_millis(),
-            Err(_) => {
-                warn!(
-                    "Failed to parse publication date '{pub_date}' for item '{}', using current time as fallback",
-                    item.title().unwrap_or("No title")
-                );
-                chrono::Utc::now().timestamp_millis()
-            }
-        };
+        let parsed_timestamp = item
+            .pub_date()
+            .and_then(|date| chrono::DateTime::parse_from_rfc2822(date).ok())
+            .map(|dt| dt.timestamp());
+
+        let timestamp = parsed_timestamp.unwrap_or_else(|| {
+            warn!(
+                "Failed to parse timestamp for item '{}', using current time -1s as fallback",
+                item.title().unwrap_or("(No title)")
+            );
+            chrono::Utc::now().timestamp().saturating_sub(1) // default to 1s ago
+        });
 
         let timeline_item = TimelineItem {
             item: item.clone(),
-            channel_title: channel_title.clone(),
-            channel_url: channel_url.clone(),
+            channel_title: channel.title().to_string(),
+            channel_url: channel.link().to_string(),
         };
 
+        // debug!("added item with timestamp {timestamp} to timeline");
         add_timeline_item(timestamp, timeline_item);
     }
 }
