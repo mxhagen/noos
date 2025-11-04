@@ -38,7 +38,7 @@ fn main() {
     let item_template = html::ItemTemplate::parse_file("templates/item.html");
 
     info!("Rendering HTML output...");
-    let html = page_template.render(&data::data_store().timeline, &item_template);
+    let html = page_template.render((&data::data_store().timeline, &item_template));
 
     info!("Writing output HTML to 'output.html'...");
     std::fs::write("output.html", html).expect("Failed to write output HTML file");
