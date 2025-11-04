@@ -1,10 +1,17 @@
-<body>
-    <main style="display:flex;align-items:center;flex-direction:column">
-        <h1> This is an html render of your rss feed! </h1>
-        <p> make sure to have a boat load of fun while you are here </p>
-        <hr style="width:900px;margin-bottom:3rem" />
-        <div class="item-container">
-            ${items}
-        </div>
-    </main>
+<head>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/basecoat-css@0.3.2/dist/basecoat.cdn.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/basecoat-css@0.3.2/dist/js/all.min.js" defer></script>
+</head>
+
+<body style="display: flex; justify-content: center; align-items: center; min-height: 100vh; margin: 0;">
+  <main class="container" style="max-width: 900px; width: 80%; margin: 2em 0 2em 0;">
+    <div class="heading" style="padding-bottom: 2em;">
+      <h1 style="font-size: 2em; padding-bottom: 0.5em;">RSS-Feed</h1>
+      <p>Stay up-to-date by looking through articles in your RSS feeds here and clicking on them to read.</p>
+    </div>
+
+    <div class="items" style="display: flex; justify-content: center; flex-direction: column;">
+      ${items}
+    </div>
+  </main>
 </body>
