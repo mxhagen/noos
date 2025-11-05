@@ -2,7 +2,7 @@
 // - Supports log levels: error, warn, info, debug (ascending verbosity)
 // - Supports logging to stderr and optionally also a log file
 
-use std::sync::OnceLock;
+use std::sync::{LazyLock, OnceLock};
 
 /// A configuration for the static logger
 /// See `init` and `log` to use the logger
@@ -89,14 +89,46 @@ where
     })
 }
 
+/// A macro helper to generate color functions
+macro_rules! color_fn {
+    ($name:ident, $code:expr) => {
+        #[doc = concat!("Wrap text in ", stringify!($name), " ANSI color codes")]
+        pub fn $name(text: &str) -> String {
+            format!("{}{}\x1b[0m", $code, text)
+        }
+    };
+}
+
+color_fn!(red, "\x1b[31m");
+color_fn!(yellow, "\x1b[33m");
+color_fn!(blue, "\x1b[34m");
+color_fn!(magenta, "\x1b[35m");
+color_fn!(lightgray, "\x1b[37m");
+
+/// A global flag indicating whether to colorize output
+pub static COLORIZE: LazyLock<bool> = LazyLock::new(|| {
+    use std::io::IsTerminal;
+    let colorize = std::env::var_os("NO_COLOR").is_none() // NO_COLOR disables all colors
+        && std::io::stderr().is_terminal(); // only color terminal output
+
+    use std::env::var_os;
+    match (var_os("CLICOLOR_FORCE"), var_os("CLICOLOR"), var_os("TERM")) {
+        (Some(force), _, _) => force != "0", // CLICOLOR_FORCE overrides all
+        (_, Some(color), _) => color != "0", // CLICOLOR enables/disables colors
+        (_, _, Some(term)) => term != "dumb", // check TERM last
+        _ => colorize,
+    }
+});
+
 /// Log a message
 /// Note that the Logger must first be initialized via `init`
 #[macro_export]
 macro_rules! log {
     ($level:expr, $($arg:tt)*) => {
         for _ in 0..1 { // trick to allow early exit via break
-            let logger = $crate::logger::LOGGER
-                .get()
+            use $crate::logger::*;
+
+            let logger = LOGGER.get()
                 .expect("Fatal: Logger used while uninitialized");
 
             // filter by minimum level
@@ -105,19 +137,33 @@ macro_rules! log {
             }
 
             let message = format!($($arg)*);
-            let datetime = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+            let datetime = chrono::Local::now().format("[%Y-%m-%d %H:%M:%S]").to_string();
 
             let prefix = match $level {
-                $crate::logger::LogLevel::Debug => "[debug]",
-                $crate::logger::LogLevel::Info => "[info] ",
-                $crate::logger::LogLevel::Warn => "[warn] ",
-                $crate::logger::LogLevel::Error => "[error]",
+                LogLevel::Debug => "[debug]",
+                LogLevel::Info => "[info] ",
+                LogLevel::Warn => "[warn] ",
+                LogLevel::Error => "[error]",
             };
 
-            // format only once
-            let msg = format!("[{datetime}] {prefix}  {message}");
-            eprintln!("{msg}");
+            let msg = format!("{datetime} {prefix}  {message}");
 
+            // write to stderr (colorized if supported)
+            if *COLORIZE {
+                let prefix = match $level {
+                    LogLevel::Debug => magenta(prefix),
+                    LogLevel::Info => blue(prefix),
+                    LogLevel::Warn => yellow(prefix),
+                    LogLevel::Error => red(prefix),
+                };
+                let datetime = lightgray(&datetime);
+                let msg_colorized = format!("{datetime} {prefix}  {message}");
+                eprintln!("{msg_colorized}");
+            } else {
+                eprintln!("{msg}");
+            }
+
+            // write uncolorized to file
             if let Some(file) = &logger.file {
                 use std::io::Write;
                 let mut file = file.try_clone().expect("Failed to clone log file handle");
