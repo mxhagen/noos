@@ -88,8 +88,7 @@ pub fn open_rss_channel(feed_url: &str) -> Result<rss::Channel, String> {
 
     let text = text.unwrap();
 
-    rss::Channel::read_from(text.as_bytes())
-        .map_err(|e| e.to_string())
+    rss::Channel::read_from(text.as_bytes()).map_err(|e| e.to_string())
 }
 
 impl TimelineItem {

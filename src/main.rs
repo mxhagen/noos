@@ -43,8 +43,8 @@ fn main() {
     for url in urls {
         info!("Loading channel from URL: {}", url);
         let channel = get_feed(&url);
-        if channel.is_some() {
-            data::add_channel_items(&channel.unwrap());
+        if let Some(ch) = channel {
+            data::add_channel_items(&ch);
         }
     }
 
