@@ -21,6 +21,10 @@ fn main() {
     logger::init(None, logger::LogLevel::Debug).unwrap();
     debug!("Parsed arguments: {args:?}");
 
+    info!("Parsing HTML templates...");
+    let page_template = html::PageTemplate::parse_file("templates/page.html");
+    let item_template = html::ItemTemplate::parse_file("templates/item.html");
+
     // // Fetch and store a sample rss feed
     //
     // let channel = get_feed();
@@ -28,14 +32,21 @@ fn main() {
     // info!("Serializing entire sample rss feed to 'sample_feed.bin'...");
     // serialize::save_cache("cache/sample_feed.bin", &serialize::SerdeWrapper(channel)).unwrap();
 
-    // Load and print the sample rss feed from cache
-    info!("Loading sample rss feed from cache...");
-    let channel = load_feed("cache/sample_feed.bin");
-    data::add_channel_items(&channel);
+    // // Load and print the sample rss feed from cache
+    // info!("Loading sample rss feed from cache...");
+    // let channel = load_feed("cache/sample_feed.bin");
+    // data::add_channel_items(&channel);
 
-    info!("Parsing HTML templates...");
-    let page_template = html::PageTemplate::parse_file("templates/page.html");
-    let item_template = html::ItemTemplate::parse_file("templates/item.html");
+    // Load a few channels from channels.txt
+    let urls = read_urls_from_file("channels.txt");
+    info!("Found {} channel URLs in 'channels.txt'", urls.len());
+    for url in urls {
+        info!("Loading channel from URL: {}", url);
+        let channel = get_feed(&url);
+        if channel.is_some() {
+            data::add_channel_items(&channel.unwrap());
+        }
+    }
 
     info!("Rendering HTML output...");
     let html = page_template.render((&data::data_store().timeline, &item_template));
@@ -48,16 +59,14 @@ fn main() {
     info!("Success! Exiting...");
 }
 
-fn get_feed() -> rss::Channel {
+fn get_feed(url: &str) -> Option<rss::Channel> {
     // Get a sample rss feed
-    let url = "https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml";
     match data::open_rss_channel(url) {
         Err(e) => {
-            error!("Failed to open RSS channel: {e}");
-            error!("Exiting...");
-            std::process::exit(1);
+            error!("Failed to open RSS channel: {e}. Skipping channel...");
+            None
         }
-        Ok(c) => c,
+        Ok(c) => c.into(),
     }
 }
 
@@ -72,4 +81,19 @@ fn print_items(channel: rss::Channel, max: usize) {
         println!("Item title: {}", item.title().unwrap_or("No title"));
     }
     println!();
+}
+
+fn read_urls_from_file(path: &str) -> Vec<String> {
+    let contents = std::fs::read_to_string(path);
+    if let Err(e) = contents {
+        error!("Failed to read URLs from file '{path}': {e}.");
+        return Vec::new();
+    }
+
+    contents
+        .unwrap()
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .collect()
 }

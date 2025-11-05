@@ -72,12 +72,11 @@ thread_local! {
 }
 
 /// Open an RSS channel to a feed via URL
-pub fn open_rss_channel(feed_url: &str) -> Result<rss::Channel, rss::Error> {
+pub fn open_rss_channel(feed_url: &str) -> Result<rss::Channel, String> {
     let response = reqwest::blocking::get(feed_url);
     if let Err(e) = response {
-        error!("GET-request failed: {e}");
-        error!("Exiting...");
-        std::process::exit(1);
+        error!("GET-request failed: {e}. Skipping channel '{feed_url}'...");
+        return Err(e.to_string());
     }
 
     let text = response.unwrap().text();
@@ -90,6 +89,7 @@ pub fn open_rss_channel(feed_url: &str) -> Result<rss::Channel, rss::Error> {
     let text = text.unwrap();
 
     rss::Channel::read_from(text.as_bytes())
+        .map_err(|e| e.to_string())
 }
 
 impl TimelineItem {
