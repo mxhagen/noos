@@ -180,7 +180,7 @@ impl Template for PageTemplate {
         // Recent items first (rev), excluding items dated in the future (filter).
         let mut items: Vec<_> = content
             .iter()
-            .filter_map(|item| (chrono::Utc::now().timestamp() >= item.timestamp).then_some(item))
+            .filter(|item| chrono::Utc::now().timestamp() >= item.timestamp)
             .collect();
 
         items.sort_by_key(|item| std::cmp::Reverse(item.timestamp));
@@ -189,7 +189,6 @@ impl Template for PageTemplate {
             .iter()
             .map(|item| item_template.render(item))
             .collect::<String>();
-
 
         // Now do the actual rendering with substitutions.
         let mut rendered = String::with_capacity(
@@ -338,3 +337,23 @@ impl std::fmt::Display for PageFormatSpecifier {
 pub trait FormatSpecifier: std::fmt::Display {}
 impl FormatSpecifier for ItemFormatSpecifier {}
 impl FormatSpecifier for PageFormatSpecifier {}
+
+// TODO: use serde and build.rs to pre-parse default templates into baked-in binary dump
+
+impl Default for ItemTemplate {
+    /// Load and parse the baked-in default item template
+    /// NOTE: parsing at runtime is bad, but parsing at comptime is very tedious in rust
+    fn default() -> Self {
+        let template = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/item.html"));
+        Self::parse(template)
+    }
+}
+
+impl Default for PageTemplate {
+    /// Load and parse the baked-in default page template
+    /// NOTE: parsing at runtime is bad, but parsing at comptime is very tedious in rust
+    fn default() -> Self {
+        let template = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/page.html"));
+        Self::parse(template)
+    }
+}

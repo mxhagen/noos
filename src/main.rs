@@ -22,20 +22,30 @@ fn main() {
     debug!("Parsed arguments: {args:?}");
 
     info!("Parsing HTML templates...");
-    let page_template = html::PageTemplate::parse_file("templates/page.html");
-    let item_template = html::ItemTemplate::parse_file("templates/item.html");
 
-    // // Fetch and store a sample rss feed
-    //
-    // let channel = get_feed();
-    //
-    // info!("Serializing entire sample rss feed to 'sample_feed.bin'...");
-    // serialize::save_cache("cache/sample_feed.bin", &serialize::SerdeWrapper(channel)).unwrap();
+    let item_template = match &args.item_template {
+        Some(item_template_path) => {
+            info!("Using custom item template from '{}'", item_template_path.display());
+            html::ItemTemplate::parse_file(item_template_path)
+        },
+        None => {
+            info!("No custom item template provided. Using default item template...");
+            html::ItemTemplate::default()
+        }
+    };
 
-    // // Load and print the sample rss feed from cache
-    // info!("Loading sample rss feed from cache...");
-    // let channel = load_feed("cache/sample_feed.bin");
-    // data::add_channel_items(&channel);
+    let page_template = match &args.page_template {
+        Some(page_template_path) => {
+            info!("Using custom page template from '{}'", page_template_path.display());
+            html::PageTemplate::parse_file(page_template_path)
+        },
+        None => {
+            info!("No custom page template provided. Using default item template...");
+            html::PageTemplate::default()
+        }
+    };
+
+    info!("Finished parsing HTML templates!");
 
     // Load a few channels from channels.txt
     let urls = read_urls_from_file("channels.txt");
@@ -46,6 +56,13 @@ fn main() {
         if let Some(ch) = channel {
             data::add_channel_items(&ch);
         }
+
+        // // to (de-)serialize for testing:
+        // info!("Serializing entire sample rss feed to 'sample_feed.bin'...");
+        // serialize::save_cache("cache/sample_feed.bin", &serialize::SerdeWrapper(channel)).unwrap();
+        //
+        // info!("Loading sample rss feed from cache...");
+        // let channel = load_feed("cache/sample_feed.bin");
     }
 
     info!("Rendering HTML output...");

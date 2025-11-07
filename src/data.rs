@@ -59,9 +59,11 @@ pub fn add_channel_items(channel: &rss::Channel) {
         added_count += 1;
     }
 
-    warn!(
-        "Failed to parse timestamp for {missing_ts_count} items from '{channel_name}', using 1m ago as fallback"
-    );
+    if missing_ts_count > 0 {
+        warn!(
+            "Failed to parse timestamp for {missing_ts_count} items from '{channel_name}', using 1m ago as fallback"
+        );
+    }
 
     debug!("added {added_count} items from {channel_name} to timeline");
 }

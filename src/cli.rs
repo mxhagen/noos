@@ -17,14 +17,17 @@ pub struct Args {
     /// - or 0-3 (where 0 = Error, 1 = Warn, 2 = Info, 3 = Debug)
     #[arg(short = 'v', long = "verbosity", value_name = "0-3", default_value_t = LogLevel::Info, verbatim_doc_comment)]
     pub verbosity: LogLevel,
-    // TODO: Make templates specifiable via CLI
-    // /// Path to the html template for item/article rendering
-    // #[arg(long = "item-template")]
-    // pub item_template: Option<std::path::PathBuf>,
-    //
-    // /// Path to the html template for the page surrounding the articles
-    // #[arg(long = "page-template")]
-    // pub page_template: Option<std::path::PathBuf>,
+
+    /// Path to the html template for item/article rendering
+    #[arg(long = "item-template")]
+    pub item_template: Option<std::path::PathBuf>,
+
+    /// Path to the html template for the page surrounding the articles
+    #[arg(long = "page-template")]
+    pub page_template: Option<std::path::PathBuf>,
+    // TODO: cli option for timelining strategy (fallback timestamps)
+    //       options could be: default to now-1min, discard item, or:
+    //       "sprinkle" (evenly distribute articles with missing timestamps between other articles)
 }
 
 #[derive(Subcommand, Debug, Clone)]
