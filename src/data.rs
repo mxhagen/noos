@@ -1,6 +1,5 @@
 //! Management of application RSS data, all in memory.
 
-use std::collections::BTreeMap;
 use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
 
 #[allow(unused_imports)]
@@ -12,6 +11,7 @@ pub struct TimelineItem {
     pub item: rss::Item,
     pub channel_title: String,
     pub channel_url: String,
+    pub timestamp: i64,
 }
 
 /// The main data store for feeds and articles
@@ -19,7 +19,7 @@ pub struct TimelineItem {
 #[derive(Debug, Default)]
 pub struct DataStoreType {
     /// Timeline of article IDs by timestamp
-    pub timeline: BTreeMap<i64, TimelineItem>,
+    pub timeline: Vec<TimelineItem>,
 }
 
 /// The global data store instance
@@ -32,15 +32,11 @@ pub fn data_store<'a>() -> MutexGuard<'a, DataStoreType> {
     DATA_STORE.lock().unwrap()
 }
 
-/// Add a timeline item to the data store
-/// NOTE: Prefer `add_channel_items` (or manually wrap items and provide timestamps).
-pub fn add_timeline_item(timestamp: i64, item: TimelineItem) {
-    let mut store = data_store();
-    store.timeline.insert(timestamp, item);
-}
-
 /// Add all items from a Channel to the data store timeline
 pub fn add_channel_items(channel: &rss::Channel) {
+    let channel_name = channel.title();
+    let (mut missing_ts_count, mut added_count) = (0, 0);
+
     for item in channel.items() {
         let parsed_timestamp = item
             .pub_date()
@@ -48,22 +44,26 @@ pub fn add_channel_items(channel: &rss::Channel) {
             .map(|dt| dt.timestamp());
 
         let timestamp = parsed_timestamp.unwrap_or_else(|| {
-            warn!(
-                "Failed to parse timestamp for item '{}', using current time -1s as fallback",
-                item.title().unwrap_or("(No title)")
-            );
-            chrono::Utc::now().timestamp().saturating_sub(1) // default to 1s ago
+            missing_ts_count += 1;
+            chrono::Utc::now().timestamp().saturating_sub(60) // default to 1m ago
         });
 
         let timeline_item = TimelineItem {
             item: item.clone(),
             channel_title: channel.title().to_string(),
             channel_url: channel.link().to_string(),
+            timestamp,
         };
 
-        // debug!("added item with timestamp {timestamp} to timeline");
-        add_timeline_item(timestamp, timeline_item);
+        data_store().timeline.push(timeline_item);
+        added_count += 1;
     }
+
+    warn!(
+        "Failed to parse timestamp for {missing_ts_count} items from '{channel_name}', using 1m ago as fallback"
+    );
+
+    debug!("added {added_count} items from {channel_name} to timeline");
 }
 
 thread_local! {

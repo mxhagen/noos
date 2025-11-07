@@ -3,7 +3,7 @@
 //! Provided templates are unchecked -- users are expected to know html,
 //! but formatted strings are escaped to prevent injection attacks.
 
-use std::{borrow::Cow, collections::BTreeMap};
+use std::borrow::Cow;
 
 use html_escape::encode_safe;
 use regex::Regex;
@@ -133,7 +133,7 @@ impl Template for ItemTemplate {
 }
 
 impl Template for PageTemplate {
-    type Deps<'a> = (&'a BTreeMap<i64, TimelineItem>, &'a ItemTemplate);
+    type Deps<'a> = (&'a [TimelineItem], &'a ItemTemplate);
 
     fn parse<S>(template: S) -> Self
     where
@@ -178,12 +178,18 @@ impl Template for PageTemplate {
 
         // String of all rendered items
         // Recent items first (rev), excluding items dated in the future (filter).
-        let items_string = content
+        let mut items: Vec<_> = content
             .iter()
-            .rev()
-            .filter_map(|(ts, item)| (chrono::Utc::now().timestamp() >= *ts).then_some(item))
+            .filter_map(|item| (chrono::Utc::now().timestamp() >= item.timestamp).then_some(item))
+            .collect();
+
+        items.sort_by_key(|item| std::cmp::Reverse(item.timestamp));
+
+        let items_string = items
+            .iter()
             .map(|item| item_template.render(item))
             .collect::<String>();
+
 
         // Now do the actual rendering with substitutions.
         let mut rendered = String::with_capacity(
