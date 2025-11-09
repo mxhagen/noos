@@ -48,14 +48,13 @@ pub enum Subcommand {
         open: bool,
     },
 
-    // TODO: implement dump subcommand
-    // /// Dump the rendered html of the web interface to a file
-    // #[command(alias = "d")]
-    // Dump {
-    //     /// File to write the dumped HTML to
-    //     #[arg(short = 'f', long = "file", default_value = "dump.html")]
-    //     file: std::path::PathBuf,
-    // },
+    /// Dump the rendered html of the web interface to a file
+    #[command(alias = "d")]
+    Dump {
+        /// File to write the dumped HTML to
+        #[arg(short = 'f', long = "file", default_value = "noos.html")]
+        file: std::path::PathBuf,
+    },
     /// Manage individual feeds
     #[command(subcommand)]
     Feed(FeedSubcommand),
@@ -69,32 +68,36 @@ pub enum FeedSubcommand {
     Add { feed: String },
     /// Remove a feed by URL
     Remove { feed: String },
-    // TODO: OPML support
-    // /// Import all feeds from an OPML file
-    // Import { file: String },
-    // /// Export all feeds to an OPML file
-    // Export { file: String },
+    /// Import all feeds from an OPML file. Note: see `$config_dir/noos/channels.txt`
+    Import { file: String },
+    /// Export all feeds to an OPML file. Note: see `$config_dir/noos/channels.txt`
+    Export { file: String },
 }
 
 /// Semantically validate and process cli arguments
 pub fn validate(args: &Args) -> Result<Args, String> {
-    let mut validated = args.clone();
-
-    if args.command.is_none() {
-        validated.command = Some(Subcommand::Serve {
-            port: 9005,
-            bind: "127.0.0.1".to_string(),
-            open: true,
-        });
-    }
-
-    Ok(validated)
+    Ok(args.clone()) // No proper validation needed just yet
 }
 
 /// Shorthand for `Args::command().error(...).exit()`
 pub fn err_exit(kind: clap::error::ErrorKind, message: impl std::fmt::Display) {
     // TODO: Reconcile this with the logger at some point
     Args::command().error(kind, message).exit()
+}
+
+impl Default for Subcommand {
+    /// Default to dumping the rendered HTML to "noos.html"
+    fn default() -> Self {
+        Subcommand::Dump {
+            file: "noos.html".into(),
+        }
+        // TODO: Set default subcommand to serve once server is implemented
+        // Subcommand::Serve {
+        //     port: 9005,
+        //     bind: "127.0.0.1".into(),
+        //     open: true,
+        // }
+    }
 }
 
 // TODO: Add config file support

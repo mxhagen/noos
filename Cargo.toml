@@ -1,6 +1,6 @@
 [package]
 name = "noos"
-version = "0.4.1"
+version = "0.4.2"
 edition = "2024"
 description = "A pragmatic RSS aggregator with a browser interface and no built-in reader."
 readme = "README.md"
@@ -10,7 +10,9 @@ license = "MIT"
 bincode = { version = "2.0.1", features = ["serde"] }
 chrono = "0.4.42"
 clap = { version = "4.5.50", features = ["derive"] }
+dirs = "6.0.0"
 html-escape = "0.2.13"
+opml = "1.1.6"
 rand = "0.9.2"
 regex = "1.12.2"
 reqwest = { version = "0.12.24", features = ["blocking"] }

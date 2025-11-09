@@ -1,6 +1,11 @@
 //! Management of application RSS data, all in memory.
 
-use std::sync::{Arc, LazyLock, Mutex, MutexGuard};
+use std::{
+    path::Path,
+    sync::{Arc, LazyLock, Mutex, MutexGuard},
+};
+
+use opml::*;
 
 #[allow(unused_imports)]
 use crate::{debug, error, info, log, warn};
@@ -75,7 +80,13 @@ thread_local! {
 
 /// Open an RSS channel to a feed via URL
 pub fn open_rss_channel(feed_url: &str) -> Result<rss::Channel, String> {
-    let response = reqwest::blocking::get(feed_url);
+    // TODO: Async requests, retries/timeout arguments?
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(5)) // flat 5 second timeout for now
+        .build()
+        .map_err(|e| e.to_string())?;
+
+    let response = client.get(feed_url).send();
     if let Err(e) = response {
         error!("GET-request failed: {e}. Skipping channel '{feed_url}'...");
         return Err(e.to_string());
@@ -140,4 +151,125 @@ impl TimelineItem {
             }
         }
     }
+}
+
+/// Import feed urls from a line-separated text file
+pub fn import_channel_urls<P>(file_path: P) -> Result<Vec<String>, String>
+where
+    P: AsRef<Path>,
+{
+    let content = std::fs::read_to_string(file_path).map_err(|e| e.to_string())?;
+    let urls: Vec<String> = content
+        .lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .map(|line| line.to_string())
+        .collect();
+
+    Ok(urls)
+}
+
+/// Export feed urls to a line-separated text file
+pub fn export_channel_urls<P, S>(file_path: P, urls: &[S]) -> Result<(), String>
+where
+    P: AsRef<Path>,
+    S: ToString,
+{
+    let content = urls.iter().map(S::to_string).collect::<Vec<_>>().join("\n");
+    std::fs::write(file_path, content).map_err(|e| e.to_string())
+}
+
+/// Export feed urls to a line-separated text file in the config directory
+pub fn export_channel_urls_to_config<S>(urls: &[S]) -> Result<(), String>
+where
+    S: ToString,
+{
+    let config_channels = dirs::config_dir()
+        .ok_or_else(|| "Fatal: Failed to get config directory".to_string())?
+        .join("noos")
+        .join("channels.txt");
+
+    if config_channels.exists() {
+        // Backup existing channels file to 'channels_{iso-date}.txt.bak'
+        let now = chrono::Utc::now().format("%Y-%m-%d").to_string();
+        let backup_path = config_channels
+            .parent()
+            .ok_or_else(|| "Failed to get parent directory".to_string())?
+            .join(format!("channels_{now}.txt.bak"));
+
+        if backup_path.exists() {
+            warn!(
+                "Backup file for today '{}' already exists, overwriting...",
+                backup_path.display()
+            );
+        }
+
+        std::fs::copy(&config_channels, &backup_path)
+            .map_err(|e| format!("Failed to backup existing channels file: {e}"))?;
+
+        warn!(
+            "Channels already existed at '{}', original file was backed up to '{}'...",
+            config_channels.display(),
+            backup_path.display(),
+        );
+    }
+
+    export_channel_urls(config_channels, urls)
+}
+
+/// Import urls of RSS channels from an OPML file
+/// NOTE: this is a compatability option, prefer `import_channel_urls`
+pub fn import_opml_channel_urls<P>(file_path: P) -> Result<Vec<String>, String>
+where
+    P: AsRef<Path>,
+{
+    let mut file = std::fs::File::open(file_path).map_err(|e| e.to_string())?;
+    let opml = OPML::from_reader(&mut file).map_err(|e| e.to_string())?;
+    let urls = opml
+        .body
+        .outlines
+        .into_iter()
+        .filter_map(|outline| outline.xml_url)
+        .collect();
+
+    Ok(urls)
+}
+
+/// Export RSS channels to an OPML file
+/// NOTE: this is a compatability option, prefer `export_channel_urls`
+pub fn export_opml<P>(file_path: P, channels: Vec<rss::Channel>) -> Result<(), String>
+where
+    P: AsRef<Path>,
+{
+    let now = chrono::Utc::now().to_rfc2822();
+
+    let outlines: Vec<Outline> = channels
+        .into_iter()
+        .map(|channel| Outline {
+            text: channel.title().into(),
+            title: Some(channel.title().into()),
+            description: match channel.description() {
+                "" => None,
+                d => Some(d.into()),
+            },
+            xml_url: Some(channel.link().into()),
+            created: Some(now.clone()),
+            category: channel.categories().first().map(|cat| cat.name().into()),
+            ..Default::default()
+        })
+        .collect();
+
+    let opml = OPML {
+        head: Some(Head {
+            title: "Noos Exported Subscriptions".to_string().into(),
+            date_created: Some(now.clone()),
+            date_modified: Some(now.clone()),
+            ..Default::default()
+        }),
+        body: Body { outlines },
+        ..Default::default()
+    };
+
+    let mut file = std::fs::File::create(file_path).map_err(|e| e.to_string())?;
+    opml.to_writer(&mut file).map_err(|e| e.to_string())
 }

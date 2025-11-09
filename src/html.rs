@@ -3,7 +3,10 @@
 //! Provided templates are unchecked -- users are expected to know html,
 //! but formatted strings are escaped to prevent injection attacks.
 
-use std::borrow::Cow;
+use std::{
+    borrow::Cow,
+    path::{Path, PathBuf},
+};
 
 use html_escape::encode_safe;
 use regex::Regex;
@@ -256,7 +259,7 @@ fn encode_specifier_with_size<'a, F: FormatSpecifier>(
     )
 }
 
-pub trait Template {
+pub trait Template: Default {
     /// A type representing dependencies required for rendering
     type Deps<'a>
     where
@@ -356,4 +359,61 @@ impl Default for PageTemplate {
         let template = include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/templates/page.html"));
         Self::parse(template)
     }
+}
+
+/// Load user-defined templates from config directory,
+/// or fall back to the built-in defaults if not found.
+pub fn load_templates_or_default<P>(
+    page_template_path: Option<P>,
+    item_template_path: Option<P>,
+) -> (PageTemplate, ItemTemplate)
+where
+    P: AsRef<Path>,
+{
+    (
+        load_template(page_template_path, "page_template.html"),
+        load_template(item_template_path, "item_template.html"),
+    )
+}
+
+/// Load a template, either using the path specified via cli,
+/// or from the user config directory, or the default (in this order)
+/// NOTE: use `load_templates_or_default` for loading all templates at once
+fn load_template<T, P>(cli_arg: Option<P>, default_name: &str) -> T
+where
+    T: Template,
+    P: AsRef<Path>,
+{
+    if let Some(path) = cli_arg {
+        info!(
+            "Using custom template specified in command line arguments: '{}'",
+            path.as_ref().display()
+        );
+        return T::parse_file(path);
+    }
+
+    match get_user_config_file(default_name) {
+        Some(path) => {
+            info!(
+                "Using custom template from config directory: '{}'",
+                path.display()
+            );
+            T::parse_file(path)
+        }
+        None => {
+            info!("No custom template found, using default.");
+            T::default()
+        }
+    }
+}
+
+/// Get the path of a file in the config directory `$config_dir/noos/$filename`
+/// Returns None if the config dir or the file can't be found
+/// See `dirs::config_dir` for more info on where this is located
+fn get_user_config_file<P: AsRef<Path>>(filename: P) -> Option<PathBuf> {
+    let file: PathBuf = dirs::config_dir()?
+        .join(env!("CARGO_BIN_NAME"))
+        .join(filename);
+
+    file.exists().then_some(file)
 }
