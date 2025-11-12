@@ -1,6 +1,6 @@
 [package]
 name = "noos"
-version = "0.4.2"
+version = "0.4.3"
 edition = "2024"
 description = "A pragmatic RSS aggregator with a browser interface and no built-in reader."
 readme = "README.md"

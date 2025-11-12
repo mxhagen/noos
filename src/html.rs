@@ -172,6 +172,7 @@ impl Template for PageTemplate {
     }
 
     fn render<'a>(&self, (content, item_template): Self::Deps<'a>) -> String {
+        info!("Rendering HTML output page...");
         if self.substitutions.is_empty() {
             warn!(
                 "No substitutions found in page template -- Your page will not contain any items!"
@@ -370,10 +371,14 @@ pub fn load_templates_or_default<P>(
 where
     P: AsRef<Path>,
 {
-    (
+    info!("Parsing HTML templates...");
+    let ts = (
         load_template(page_template_path, "page_template.html"),
         load_template(item_template_path, "item_template.html"),
-    )
+    );
+    info!("Finished parsing HTML templates!");
+
+    ts
 }
 
 /// Load a template, either using the path specified via cli,
@@ -416,4 +421,19 @@ fn get_user_config_file<P: AsRef<Path>>(filename: P) -> Option<PathBuf> {
         .join(filename);
 
     file.exists().then_some(file)
+}
+
+/// Dump the generated HTML to a file, with logging output.
+/// Exits on failure.
+pub fn dump_html_to_file<P: AsRef<Path>>(html: &str, path: P) {
+    let path = path.as_ref();
+    info!("Dumping output HTML to '{}'...", path.display());
+
+    match std::fs::write(path, html) {
+        Err(e) => {
+            error!("Fatal: Failed to write output HTML file: {e}");
+            std::process::exit(1);
+        }
+        Ok(_) => info!("Successfully dumped output HTML file!"),
+    }
 }

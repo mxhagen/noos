@@ -15,7 +15,8 @@ pub struct Args {
     /// Accepted values in ascending verbosity are:
     /// - "error", "warn", "info", "debug" (case insensitive)
     /// - or 0-3 (where 0 = Error, 1 = Warn, 2 = Info, 3 = Debug)
-    #[arg(short = 'v', long = "verbosity", value_name = "0-3", default_value_t = LogLevel::Info, verbatim_doc_comment)]
+    // TODO: change default verbosity to Info once stable
+    #[arg(short = 'v', long = "verbosity", value_name = "0-3", default_value_t = LogLevel::Debug, verbatim_doc_comment)]
     pub verbosity: LogLevel,
 
     /// Path to the html template for item/article rendering
@@ -75,14 +76,9 @@ pub enum FeedSubcommand {
 }
 
 /// Semantically validate and process cli arguments
-pub fn validate(args: &Args) -> Result<Args, String> {
-    Ok(args.clone()) // No proper validation needed just yet
-}
-
-/// Shorthand for `Args::command().error(...).exit()`
-pub fn err_exit(kind: clap::error::ErrorKind, message: impl std::fmt::Display) {
-    // TODO: Reconcile this with the logger at some point
-    Args::command().error(kind, message).exit()
+/// Exits on failure
+pub fn validate(args: &Args) -> Args {
+    args.clone() // No proper validation needed just yet
 }
 
 impl Default for Subcommand {

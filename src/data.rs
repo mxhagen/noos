@@ -104,6 +104,21 @@ pub fn open_rss_channel(feed_url: &str) -> Result<rss::Channel, String> {
     rss::Channel::read_from(text.as_bytes()).map_err(|e| e.to_string())
 }
 
+/// Open multiple RSS channels from a list of feed URLs with logging
+/// Skipping any that fail to open
+pub fn open_rss_channels(feed_urls: &[String]) -> Vec<rss::Channel> {
+    feed_urls
+        .iter()
+        .flat_map(|url| match open_rss_channel(url) {
+            Err(e) => {
+                error!("Failed to open RSS channel at URL '{url}': {e}. Skipping channel...");
+                None
+            }
+            Ok(c) => Some(c),
+        })
+        .collect::<Vec<_>>()
+}
+
 impl TimelineItem {
     /// Get the title of the item, or "(No title)"
     pub fn title(&self) -> String {
@@ -169,6 +184,46 @@ where
     Ok(urls)
 }
 
+/// Read URLs from the channels file in the config directory
+/// Exits on failure
+pub fn read_urls_from_config_channels_file() -> Vec<String> {
+    let path = dirs::config_dir()
+        .unwrap()
+        .join("noos")
+        .join("channels.txt");
+
+    if !path.exists() {
+        warn!(
+            "Channels file '{}' does not exist. Creating an empty one...",
+            path.display()
+        );
+
+        if let Err(e) = std::fs::create_dir_all(path.parent().unwrap())
+            .and_then(|_| std::fs::File::create(&path))
+        {
+            error!(
+                "Failed to create channels file in config directory '{}': {e}.",
+                path.display()
+            );
+            std::process::exit(1);
+        }
+    }
+
+    let contents = std::fs::read_to_string(&path);
+    if let Err(e) = contents {
+        error!("Failed to read URLs from file '{}': {e}.", path.display());
+        std::process::exit(1);
+    }
+
+    match import_channel_urls(&path) {
+        Ok(urls) => urls,
+        Err(e) => {
+            error!("Failed to import URLs from file '{}': {e}.", path.display());
+            std::process::exit(1);
+        }
+    }
+}
+
 /// Export feed urls to a line-separated text file
 pub fn export_channel_urls<P, S>(file_path: P, urls: &[S]) -> Result<(), String>
 where
@@ -179,23 +234,27 @@ where
     std::fs::write(file_path, content).map_err(|e| e.to_string())
 }
 
-/// Export feed urls to a line-separated text file in the config directory
-pub fn export_channel_urls_to_config<S>(urls: &[S]) -> Result<(), String>
+/// Export feed urls to a line-separated text file in the config directory (with logging)
+/// Exits on failure
+pub fn export_channel_urls_to_config<S>(urls: &[S])
 where
     S: ToString,
 {
-    let config_channels = dirs::config_dir()
-        .ok_or_else(|| "Fatal: Failed to get config directory".to_string())?
-        .join("noos")
-        .join("channels.txt");
+    let config_dir = match dirs::config_dir() {
+        Some(dir) => dir.join("noos"),
+        None => {
+            error!("Fatal: Failed to get config directory");
+            std::process::exit(1);
+        }
+    };
 
-    if config_channels.exists() {
+    let config_channels_file = config_dir.join("channels.txt");
+
+    if config_channels_file.exists() {
         // Backup existing channels file to 'channels_{iso-date}.txt.bak'
+        // Meaning we keep one backup per day
         let now = chrono::Utc::now().format("%Y-%m-%d").to_string();
-        let backup_path = config_channels
-            .parent()
-            .ok_or_else(|| "Failed to get parent directory".to_string())?
-            .join(format!("channels_{now}.txt.bak"));
+        let backup_path = config_dir.join(format!("channels_{now}.txt.bak"));
 
         if backup_path.exists() {
             warn!(
@@ -204,40 +263,64 @@ where
             );
         }
 
-        std::fs::copy(&config_channels, &backup_path)
-            .map_err(|e| format!("Failed to backup existing channels file: {e}"))?;
+        if let Err(e) = std::fs::copy(&config_channels_file, &backup_path) {
+            error!("Failed to backup existing channels file: {e}");
+            std::process::exit(1);
+        }
 
         warn!(
             "Channels already existed at '{}', original file was backed up to '{}'...",
-            config_channels.display(),
+            config_channels_file.display(),
             backup_path.display(),
         );
     }
 
-    export_channel_urls(config_channels, urls)
+    match export_channel_urls(config_channels_file, urls) {
+        Ok(_) => info!(
+            "Imported {} URLs to channels file from OPML file",
+            urls.len()
+        ),
+        Err(e) => {
+            error!("Failed to update channels file: {e}");
+            std::process::exit(1);
+        }
+    }
 }
 
-/// Import urls of RSS channels from an OPML file
+/// Import urls of RSS channels from an OPML file (with logging)
+/// Exits on failure
 /// NOTE: this is a compatability option, prefer `import_channel_urls`
-pub fn import_opml_channel_urls<P>(file_path: P) -> Result<Vec<String>, String>
+pub fn import_opml_channel_urls<P>(file_path: P) -> Vec<String>
 where
     P: AsRef<Path>,
 {
-    let mut file = std::fs::File::open(file_path).map_err(|e| e.to_string())?;
-    let opml = OPML::from_reader(&mut file).map_err(|e| e.to_string())?;
-    let urls = opml
-        .body
+    info!(
+        "Importing feeds from OPML file: '{}'",
+        file_path.as_ref().display()
+    );
+
+    let file = std::fs::File::open(file_path).map_err(|e| e.to_string());
+
+    let opml = file.and_then(|mut f| OPML::from_reader(&mut f).map_err(|e| e.to_string()));
+    let opml = match opml {
+        Ok(o) => o,
+        Err(e) => {
+            error!("Fatal: Failed to parse OPML file: {e}");
+            std::process::exit(1);
+        }
+    };
+
+    opml.body
         .outlines
         .into_iter()
         .filter_map(|outline| outline.xml_url)
-        .collect();
-
-    Ok(urls)
+        .collect()
 }
 
-/// Export RSS channels to an OPML file
+/// Export RSS channels to an OPML file (with logging)
+/// Exits on failure
 /// NOTE: this is a compatability option, prefer `export_channel_urls`
-pub fn export_opml<P>(file_path: P, channels: Vec<rss::Channel>) -> Result<(), String>
+pub fn export_opml<P>(file_path: P, channels: Vec<rss::Channel>)
 where
     P: AsRef<Path>,
 {
@@ -270,6 +353,14 @@ where
         ..Default::default()
     };
 
-    let mut file = std::fs::File::create(file_path).map_err(|e| e.to_string())?;
-    opml.to_writer(&mut file).map_err(|e| e.to_string())
+    let file = std::fs::File::create(file_path).map_err(|e| e.to_string());
+
+    let write_result = file.and_then(|mut f| opml.to_writer(&mut f).map_err(|e| e.to_string()));
+    match write_result {
+        Ok(_) => info!("Successfully exported URLs to OPML file"),
+        Err(e) => {
+            error!("Fatal: Failed to export OPML file: {e}");
+            std::process::exit(1);
+        }
+    }
 }
