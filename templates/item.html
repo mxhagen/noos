@@ -1,7 +1,7 @@
 
-<a href="${link}">
-  <div class="card" style="margin-bottom: 1em;">
-    <header>
+<div class="card" style="margin-bottom: 1em;">
+  <header>
+    <a href="${link}">
       <h2 title="${title}"
         style="
           overflow: hidden; text-overflow: ellipsis;
@@ -9,19 +9,21 @@
       ">
         ${title}
       </h2>
-    </header>
-    <section>
-      <p>${description}</p>
-    </section>
-    <footer style="display: flex; align-items: space-between; font-size: 0.8em; color: gray;">
-      <div style="width: 100%; display: flex; justify-content: space-between;">
-        <span>${time}</span>
-        <span>
-          <span>via ${source}</span>
-          <span>&nbsp;|&nbsp;</span>
-          <span>${date}</span>
-        </span>
-      </div>
-    </footer>
-  </div>
-</a>
+    </a>
+  </header>
+  <section>
+    <p>${description}</p>
+  </section>
+  <footer style="display: flex; align-items: space-between; font-size: 0.8em; color: gray;">
+    <div style="width: 100%; display: flex; justify-content: space-between;">
+      <span>${time}</span>
+      <span>
+        <span>via <a href="${channel_link}">${source}</a></span>
+        <span>&nbsp;|&nbsp;</span>
+        <span>${date}</span>
+        <span>&nbsp;|&nbsp;</span>
+        <span>Timestamp: ${timestamp}</span>
+      </span>
+    </div>
+  </footer>
+</div>

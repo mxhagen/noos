@@ -5,6 +5,7 @@
 
 use std::{
     borrow::Cow,
+    collections::HashSet,
     path::{Path, PathBuf},
 };
 
@@ -48,7 +49,16 @@ impl Template for ItemTemplate {
         let mut substitutions = Vec::new();
 
         use ItemFormatSpecifier::*;
-        for specifier in [Title, Description, Source, Link, Date, Time] {
+        for specifier in [
+            Title,
+            Description,
+            Source,
+            Link,
+            Date,
+            Time,
+            Timestamp,
+            ChannelLink,
+        ] {
             substitutions.extend(
                 find_format_specifiers(&template, specifier)
                     .into_iter()
@@ -86,9 +96,12 @@ impl Template for ItemTemplate {
         // the size of the format specifier.
         let mut size = self.template.len() as isize;
 
-        let (item_title, item_description, item_source, item_link, item_date, item_time) = (
-            item.title(), item.description(), item.source(), item.link(), item.date(), item.time()
+        let (item_title, item_description, item_source, item_link, item_date, item_time, item_timestamp, item_channel_link) = (
+            item.title(), item.description(), item.source(), item.link(), item.date(), item.time(), item.timestamp.to_string(),
+            item.channel_url.clone()
         );
+
+        // TODO: Refactor item rendering
 
         use ItemFormatSpecifier::*;
         let (title_encoded, n1) = encode_specifier_with_size(&item_title, Title);
@@ -97,6 +110,8 @@ impl Template for ItemTemplate {
         let (link_encoded, n4) = encode_specifier_with_size(&item_link, Link);
         let (date_encoded, n5) = encode_specifier_with_size(&item_date, Date);
         let (time_encoded, n6) = encode_specifier_with_size(&item_time, Time);
+        let (timestamp_encoded, n7) = encode_specifier_with_size(&item_timestamp, Timestamp);
+        let (channel_link_encoded, n8) = encode_specifier_with_size(&item_channel_link, ChannelLink);
 
         for subst in &self.substitutions {
             size += match subst.specifier {
@@ -106,6 +121,8 @@ impl Template for ItemTemplate {
                 Link => n4,
                 Date => n5,
                 Time => n6,
+                Timestamp => n7,
+                ChannelLink => n8,
             };
         }
 
@@ -123,6 +140,8 @@ impl Template for ItemTemplate {
                 Link => &link_encoded,
                 Date => &date_encoded,
                 Time => &time_encoded,
+                Timestamp => &timestamp_encoded,
+                ChannelLink => &channel_link_encoded,
             };
 
             rendered.push_str(&self.template[last_pos..start]);
@@ -143,14 +162,20 @@ impl Template for PageTemplate {
         S: ToString,
     {
         let template = template.to_string();
-        let mut substitutions = find_format_specifiers(&template, PageFormatSpecifier::Items)
-            .into_iter()
-            .map(|(start, end)| Substitution {
-                start,
-                end,
-                specifier: PageFormatSpecifier::Items,
-            })
-            .collect::<Vec<PageSubst>>();
+        let mut substitutions = Vec::new();
+
+        use PageFormatSpecifier::*;
+        for specifier in [Items, ItemCount, ChannelCount, Date, Time, Timestamp] {
+            substitutions.extend(
+                find_format_specifiers(&template, specifier)
+                    .into_iter()
+                    .map(|(start, end)| Substitution {
+                        start,
+                        end,
+                        specifier,
+                    }),
+            );
+        }
 
         substitutions.sort_by_key(|s| s.start);
 
@@ -172,42 +197,67 @@ impl Template for PageTemplate {
     }
 
     fn render<'a>(&self, (content, item_template): Self::Deps<'a>) -> String {
-        info!("Rendering HTML output page...");
-        if self.substitutions.is_empty() {
-            warn!(
-                "No substitutions found in page template -- Your page will not contain any items!"
-            );
-            return self.template.clone();
-        }
+        let mut size = self.template.len() as isize;
 
-        // String of all rendered items
-        // Recent items first (rev), excluding items dated in the future (filter).
-        let mut items: Vec<_> = content
-            .iter()
-            .filter(|item| chrono::Utc::now().timestamp() >= item.timestamp)
-            .collect();
-
-        items.sort_by_key(|item| std::cmp::Reverse(item.timestamp));
-
-        let items_string = items
+        let items = content
             .iter()
             .map(|item| item_template.render(item))
             .collect::<String>();
 
-        // Now do the actual rendering with substitutions.
-        let mut rendered = String::with_capacity(
-            (self.template.len() as isize
-                + (items_string.len() as isize
-                    - "${}".len() as isize
-                    - PageFormatSpecifier::Items.to_string().len() as isize)
-                    * self.substitutions.len() as isize) as usize,
+        // Items are already encoded in ItemTemplate::render
+        let n1 = items.len() as isize - "${items}".len() as isize;
+
+        let channel_count = content
+            .iter()
+            .map(|item| &item.channel_url)
+            .collect::<HashSet<_>>()
+            .len()
+            .to_string();
+
+        let (item_count, date, time, timestamp) = (
+            content.len().to_string(),
+            chrono::Utc::now().format("%Y-%m-%d").to_string(),
+            chrono::Utc::now().format("%H:%M:%S").to_string(),
+            chrono::Utc::now().timestamp().to_string(),
         );
 
+        use PageFormatSpecifier::*;
+        let (item_count_encoded, n2) = encode_specifier_with_size(&item_count, ItemCount);
+        let (channel_count_encoded, n3) = encode_specifier_with_size(&channel_count, ChannelCount);
+        let (date_encoded, n4) = encode_specifier_with_size(&date, Date);
+        let (time_encoded, n5) = encode_specifier_with_size(&time, Time);
+        let (timestamp_encoded, n6) = encode_specifier_with_size(&timestamp, Timestamp);
+
+        for subst in &self.substitutions {
+            size += match subst.specifier {
+                Items => n1,
+                ItemCount => n2,
+                ChannelCount => n3,
+                Date => n4,
+                Time => n5,
+                Timestamp => n6,
+            };
+        }
+
+        // Now do the actual rendering with substitutions.
+        let mut rendered = String::with_capacity(size as usize);
+
+        // Build the final string
         let mut last_pos = 0;
         for subst in &self.substitutions {
-            rendered.push_str(&self.template[last_pos..subst.start]);
-            rendered.push_str(&items_string);
-            last_pos = subst.end;
+            let (start, end) = (subst.start, subst.end);
+            let encoded = match subst.specifier {
+                Items => &items.clone().into(),
+                ItemCount => &item_count_encoded,
+                ChannelCount => &channel_count_encoded,
+                Date => &date_encoded,
+                Time => &time_encoded,
+                Timestamp => &timestamp_encoded,
+            };
+
+            rendered.push_str(&self.template[last_pos..start]);
+            rendered.push_str(encoded);
+            last_pos = end;
         }
         rendered.push_str(&self.template[last_pos..]);
 
@@ -222,6 +272,8 @@ fn find_format_specifiers<F>(template: &str, specifier: F) -> Vec<(usize, usize)
 where
     F: FormatSpecifier,
 {
+    // TODO: Reconsider the format specifier escaping logic
+    // TODO: Parse all specifiers in one pass/regex for efficiency
     let re = format!(r"(?:^|[^\\])\$\{{{specifier}\}}");
     let re = Regex::new(&re).unwrap();
 
@@ -296,8 +348,8 @@ pub enum ItemFormatSpecifier {
     Link,
     Date,
     Time,
-    // TODO: Add item format specifier for timestamp (beside string date/time)
-    // TODO: Add item format specifier for channel url (not article url)
+    Timestamp,
+    ChannelLink,
     // TODO: Add item format specifier for all RSS item fields including media (images)
     //       see https://www.rssboard.org/rss-specification#hrelementsOfLtitemgt
 }
@@ -307,10 +359,12 @@ pub enum ItemFormatSpecifier {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PageFormatSpecifier {
     Items,
-    // TODO: Add page format specifier for item count
-    // TODO: Add page format specifier for source count
-    // TODO: Add page format specifier for update date/time (strings + timestamp)
-    // TODO: Add page format specifier for noos metadata (build)
+    ItemCount,
+    ChannelCount,
+    Date,
+    Time,
+    Timestamp,
+    // TODO: Add page format specifier for noos metadata (version/build)
 }
 
 impl std::fmt::Display for ItemFormatSpecifier {
@@ -323,6 +377,8 @@ impl std::fmt::Display for ItemFormatSpecifier {
             Link => "link",
             Date => "date",
             Time => "time",
+            Timestamp => "timestamp",
+            ChannelLink => "channel_link",
         };
         write!(f, "{s}")
     }
@@ -333,6 +389,11 @@ impl std::fmt::Display for PageFormatSpecifier {
         use PageFormatSpecifier::*;
         let s = match self {
             Items => "items",
+            ItemCount => "item_count",
+            ChannelCount => "channel_count",
+            Date => "date",
+            Time => "time",
+            Timestamp => "timestamp",
         };
         write!(f, "{s}")
     }
@@ -437,3 +498,6 @@ pub fn dump_html_to_file<P: AsRef<Path>>(html: &str, path: P) {
         Ok(_) => info!("Successfully dumped output HTML file!"),
     }
 }
+
+// TODO: Fix times using UTC instead of local time (everywhere)
+//       Use UTC internally, then convert to local for user facing dates/times
